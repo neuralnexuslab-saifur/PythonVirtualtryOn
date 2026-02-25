@@ -1,0 +1,55 @@
+import torch
+import numpy as np
+from PIL import Image
+from transformers import SamModel, SamProcessor
+
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+
+# Load SAM
+model = SamModel.from_pretrained("facebook/sam-vit-base").to(device)
+processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
+
+# Load image
+image = Image.open("person.jpg").convert("RGB")
+width, height = image.size
+
+# --- Create a torso bounding box (center region) ---
+# Adjust these ratios if needed
+x1 = int(width * 0.25)
+y1 = int(height * 0.25)
+x2 = int(width * 0.75)
+y2 = int(height * 0.75)
+
+input_boxes = [[[x1, y1, x2, y2]]]  # SAM expects nested list
+
+# Prepare input with bounding box prompt
+inputs = processor(
+    images=image,
+    input_boxes=input_boxes,
+    return_tensors="pt"
+).to(device)
+
+# Generate mask
+with torch.no_grad():
+    outputs = model(**inputs)
+
+masks = processor.image_processor.post_process_masks(
+    outputs.pred_masks.cpu(),
+    inputs["original_sizes"].cpu(),
+    inputs["reshaped_input_sizes"].cpu()
+)
+
+# Take first predicted mask
+mask = masks[0][0]
+mask = mask.squeeze().cpu().numpy()
+
+# Convert to binary 0/255
+mask = (mask > 0).astype(np.uint8) * 255
+
+# Ensure 2D
+if mask.ndim == 3:
+    mask = mask[0]
+
+print("Mask shape:", mask.shape)
+
+Image.fromarray(mask).save("clothing_mask.png")
